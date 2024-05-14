@@ -185,27 +185,31 @@ fork(void)
   struct proc *curproc = myproc();
 
   // Allocate process.
-  if((np = allocproc()) == 0){
+  if((np = allocproc()) == 0){//빈 프로세스가 없음. ptable에서 찾는 거 같은데...
     return -1;
   }
 
   // Copy process state from proc.
+  //copyuvm: 현재 프로세스의 page와 memorysize를 기반으로 메모리를 카피함. 
+  //thread를 구현하기 위해선 이 함수를 조금 손봐야 할 듯
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+    //카피 실패
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
     return -1;
   }
+  
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
-  // Clear %eax so that fork returns 0 in the child.
+  // Clear %eax so that fork returns 0 in the child. rax는 return value저장
   np->tf->eax = 0;
 
-  for(i = 0; i < NOFILE; i++)
+  for(i = 0; i < NOFILE; i++)//nofile == 16
     if(curproc->ofile[i])
-      np->ofile[i] = filedup(curproc->ofile[i]);
+      np->ofile[i] = filedup(curproc->ofile[i]);//file에 대한 접근 레퍼런스 수 증가.
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
@@ -480,7 +484,6 @@ int
 kill(int pid)
 {
   struct proc *p;
-
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){
