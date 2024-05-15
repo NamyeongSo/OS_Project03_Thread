@@ -1,3 +1,11 @@
+void free_proc(struct proc *curproc);
+
+//여러 syscall에 lock을 걸어주기 위함.
+extern struct {
+    struct spinlock lock;
+    struct proc proc[NPROC];
+} ptable;
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -51,7 +59,7 @@ enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 //   char name[16];               // Process name (debugging)
 // };
 
-//이거에 접근하면 동기화 처리 해줘야함.
+//이거에 접근하면 동기화 처리 해줘야함. tgid에 대해 구현해줄 필요가 있을 수도...
 struct sharedData {
   uint sz;                     // Size of process memory (bytes)->공유가능
   pde_t* pgdir;                // Page table->공유가능

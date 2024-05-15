@@ -8,7 +8,8 @@
 #include "elf.h"
 
 //thread다 free하고 그 다음에 딱 하나 thread에 exec해주는 로직
-//지금 로직에서 free만 추가해주면 됨.
+//지금 로직에서 free만 추가해주면 됨.굿
+
 int
 exec(char *path, char **argv)
 {
@@ -20,6 +21,7 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
+  int order = curproc->orderOfThread;
 
   begin_op();
 
@@ -62,6 +64,12 @@ exec(char *path, char **argv)
   iunlockput(ip);
   end_op();
   ip = 0;
+
+  for(int i = 0; i<5; i++){
+    if(i != order && curproc->sharePtr->isThere[i] == 1){
+      free_proc(curproc->sharePtr->threads[i]);
+    }
+  }
 
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible.  Use the second as the user stack.

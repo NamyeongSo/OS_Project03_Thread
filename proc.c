@@ -52,6 +52,32 @@ mycpu(void)
   panic("unknown apicid\n");
 }
 
+void free_proc(struct proc *curproc) {
+    acquire(&ptable.lock);
+    int order = curproc->orderOfThread;
+    curproc->sharePtr->isThere[order] = 0;
+    curproc->sharePtr->threads[order] = NULL;
+    curproc->sharePtr->numOfThread -= 1;
+    if (curproc->kstack) {
+        kfree(curproc->kstack);
+        curproc->kstack = NULL;
+    }
+    if (curproc->tf) {
+        kfree(curproc->tf);
+        curproc->tf = NULL;
+    }
+    if (curproc->context) {
+        kfree(curproc->context);
+        curproc->context = NULL;
+    }
+    if (curproc->sharePtr) {
+        kfree(curproc->sharePtr);
+        curproc->sharePtr = NULL;
+    }
+    kfree(curproc);
+    release(&ptable.lock);
+}
+
 // Disable interrupts so that we are not rescheduled
 // while reading proc from the cpu structure
 struct proc*
@@ -535,6 +561,7 @@ int
 kill(int pid)
 {
   struct proc *p;
+  // int killCount = 0;
   acquire(&ptable.lock);
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->pid == pid){//thread가 kill되는 조건 -> 다른 thread다 kill해줘야함.->threads[]를 이용하자.

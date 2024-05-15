@@ -5,7 +5,7 @@
 #define NUM_THREAD 5
 
 int status;
-thread_t thread[NUM_THREAD];
+thread_t thread[NUM_THREAD];//pid 배열
 int expected[NUM_THREAD];
 
 void failed()
