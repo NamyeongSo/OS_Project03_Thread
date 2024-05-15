@@ -261,10 +261,9 @@ fork(void)
   //copyuvm: 현재 프로세스의 page와 memorysize를 기반으로 메모리를 카피함. 
   //thread를 구현하기 위해선 이 함수를 조금 손봐야 할 듯
   
-  //**할당 부분 필요없음. 그냥 현재 프로세스의 shared data를 가리키면 된다,
-  acquire(&ptable.lock);
-  np->sharePtr = curproc->sharePtr;
-  release(&ptable.lock);
+  char* mem = kalloc();  // 메모리 할당
+  memset(mem, 0, sizeof(struct sharedData));
+  np->sharePtr = (struct sharedData*)mem;  // 타입 캐스팅하여 반환
   
   if((np->sharePtr->pgdir = copyuvm(curproc->sharePtr->pgdir, curproc->sharePtr->sz)) == 0){
     //카피 실패
@@ -274,7 +273,7 @@ fork(void)
     return -1;
   }
   
-  // np->sharePtr->sz = curproc->sharePtr->sz;
+  np->sharePtr->sz = curproc->sharePtr->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
@@ -293,16 +292,15 @@ fork(void)
   acquire(&ptable.lock);
   
 
-  np->sharePtr->numOfThread++;
+  np->sharePtr->numOfThread = 1;
   int index;
-  for(index = 0; index<5;index++){
-    if(np->sharePtr->isThere[index] == 0){
-      np->sharePtr->threads[index] = np;
-      break;
-    }
+  for(index = 1; index<5;index++){
+    np->sharePtr->isThere[index] = 0;
+    np->sharePtr->threads[index] = np;
   }
-  np->orderOfThread = index;
+  np->orderOfThread = 0;
   np->sharePtr->isThere[index] = 1;
+
   cprintf("newProc's index is:%d\n",np->orderOfThread);
   cprintf("newProc is there:%d\n",np->sharePtr->isThere[index]);
   cprintf("newProc's pid is:%d\n",np->pid);
