@@ -1,5 +1,4 @@
 // Mutual exclusion spin locks.
-
 #include "types.h"
 #include "defs.h"
 #include "param.h"

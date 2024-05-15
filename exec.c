@@ -6,6 +6,7 @@
 #include "defs.h"
 #include "x86.h"
 #include "elf.h"
+#include <stddef.h>
 
 //thread다 free하고 그 다음에 딱 하나 thread에 exec해주는 로직
 //지금 로직에서 free만 추가해주면 됨.굿
@@ -21,7 +22,7 @@ exec(char *path, char **argv)
   struct proghdr ph;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
-  int order = curproc->orderOfThread;
+  // int order = curproc->orderOfThread;
 
   begin_op();
 
@@ -65,11 +66,13 @@ exec(char *path, char **argv)
   end_op();
   ip = 0;
 
-  for(int i = 0; i<5; i++){
-    if(i != order && curproc->sharePtr->isThere[i] == 1){
-      free_proc(curproc->sharePtr->threads[i]);
-    }
-  }
+  //디버깅을 위해서 잠시 지우기
+  // for(int i = 0; i<5; i++){
+  //   if(i != order && curproc->sharePtr->isThere[i] == 1){
+  //     if(curproc->sharePtr->threads[i] != NULL)
+  //       free_proc(curproc->sharePtr->threads[i]);
+  //   }
+  // }
 
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible.  Use the second as the user stack.
@@ -105,9 +108,10 @@ exec(char *path, char **argv)
   safestrcpy(curproc->name, last, sizeof(curproc->name));
 
   // Commit to the user image.
-  oldpgdir = curproc->sharedPtr->pgdir;
-  curproc->sharedPtr->pgdir = pgdir;
-  curproc->sharedPtr->sz = sz;
+  cprintf("Value of oldPgdir: %d\n", curproc->sharePtr->pgdir);
+  oldpgdir = curproc->sharePtr->pgdir;
+  curproc->sharePtr->pgdir = pgdir;
+  curproc->sharePtr->sz = sz;
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
   curproc->orderOfThread = 0;
@@ -116,8 +120,8 @@ exec(char *path, char **argv)
     curproc->sharePtr->isThere[i] = 0;
   }
   curproc->sharePtr->threads[0] = curproc;
-  curproc->sharePtr->numOfThread = ;
-  //1
+  curproc->sharePtr->numOfThread = 1;
+  //
   switchuvm(curproc);
   freevm(oldpgdir);
   return 0;

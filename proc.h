@@ -1,10 +1,9 @@
-void free_proc(struct proc *curproc);
+#ifndef PROC_H
+#define PROC_H
+
+#include "spinlock.h"
 
 //여러 syscall에 lock을 걸어주기 위함.
-extern struct {
-    struct spinlock lock;
-    struct proc proc[NPROC];
-} ptable;
 
 // Per-CPU state
 struct cpu {
@@ -68,7 +67,7 @@ struct sharedData {
   int numOfThread;               // shared Data와 연결된 thread가 몇 개인지 판단.
   struct proc* threads[5];     // thread의 max 개수가 몇개일까나
   int isThere[5];              //threads의 특정 위치에 존재하는겨 아닌겨.
-}
+};
 
 struct proc {
   char *kstack;                // Bottom of kernel stack for this process
@@ -84,9 +83,20 @@ struct proc {
   int orderOfThread;             // 필요할 지는 모르겠음.
 };
 
+void free_proc(struct proc *curproc);
+
+typedef struct {
+    struct spinlock lock;
+    struct proc proc[NPROC];
+} ptableStruct;
+
+extern ptableStruct ptable;
+
 
 // Process memory is laid out contiguously, low addresses first:
 //   text
 //   original data and bss
 //   fixed-size stack
 //   expandable heap
+
+#endif

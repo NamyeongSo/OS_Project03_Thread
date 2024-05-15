@@ -31,7 +31,7 @@ sys_kill(void)
 {
   int pid;
   struct proc* p;
-  int found =  0
+  int found =  0;
   acquire(&ptable.lock);
   if(argint(0, &pid) < 0)
     return -1;
@@ -68,13 +68,13 @@ sys_sbrk(void)
   int addr;
   int n;
 
-  acquire(&ptable.lock);
+  // acquire(&ptable.lock);
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sharePtr->sz;
   if(growproc(n) < 0)
     return -1;
-  release(&ptable.lock);
+  // release(&ptable.lock);
 
   return addr;
 }

@@ -6,11 +6,7 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
-
-struct {
-  struct spinlock lock;
-  struct proc proc[NPROC];
-} ptable;
+#include <stddef.h>
 
 static struct proc *initproc;
 
@@ -20,9 +16,10 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+ptableStruct ptable;
 void
 pinit(void)
-{
+{ 
   initlock(&ptable.lock, "ptable");
 }
 
@@ -54,27 +51,32 @@ mycpu(void)
 
 void free_proc(struct proc *curproc) {
     acquire(&ptable.lock);
+    cprintf("free Proc called!!\n");
     int order = curproc->orderOfThread;
     curproc->sharePtr->isThere[order] = 0;
-    curproc->sharePtr->threads[order] = NULL;
+    // curproc->sharePtr->threads[order] = NULL;
     curproc->sharePtr->numOfThread -= 1;
-    if (curproc->kstack) {
-        kfree(curproc->kstack);
-        curproc->kstack = NULL;
+    if (curproc->kstack){
+      cprintf("before free kstack\n");
+      kfree(curproc->kstack);
+      cprintf("after free kstack\n");
     }
-    if (curproc->tf) {
-        kfree(curproc->tf);
-        curproc->tf = NULL;
-    }
-    if (curproc->context) {
-        kfree(curproc->context);
-        curproc->context = NULL;
-    }
-    if (curproc->sharePtr) {
-        kfree(curproc->sharePtr);
-        curproc->sharePtr = NULL;
-    }
-    kfree(curproc);
+    // if (curproc->tf){
+    //   cprintf("before free trapFrame\n");
+    //   free((char*)curproc->tf);
+    //   cprintf("after free trapFrame\n");
+    //   curproc->tf = NULL;  // 메모리 해제 후 포인터를 NULL로 설정
+    // // }
+    // if (curproc->context){
+    //   free((char*)curproc->context);
+    //   curproc->context= NULL;
+    // }
+    // if (curproc->sharePtr){
+    //   kfree((char*)curproc->sharePtr);
+    //   curproc->sharePtr = NULL;
+    // }
+    // // free((char*)curproc);
+    // curproc = NULL;
     release(&ptable.lock);
 }
 
@@ -107,18 +109,18 @@ myproc(void) {
 // }
 
 //그냥 proc구조체가 존재하는 모든 곳을 수정해버려??
-struct thread*
-mythread(void) {
-  struct cpu *c;
-  struct proc *p;
-  struct thread *t;
-  pushcli();
-  c = mycpu();
-  p = c->proc;
-  procToThread(p,t);
-  popcli();
-  return p;
-}
+// struct thread*
+// mythread(void) {
+//   struct cpu *c;
+//   struct proc *p;
+//   struct thread *t;
+//   pushcli();
+//   c = mycpu();
+//   p = c->proc;
+//   procToThread(p,t);
+//   popcli();
+//   return p;
+// }
 
 //PAGEBREAK: 32
 // Look in the process table for an UNUSED proc.
@@ -130,7 +132,6 @@ allocproc(void)
 {
   struct proc *p;
   char *sp;
-
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
@@ -179,7 +180,12 @@ userinit(void)
   extern char _binary_initcode_start[], _binary_initcode_size[];
 
   p = allocproc();
-  p->sharePtr = kalloc;()//메모리 낭비 있을 거 같긴 하지만 일단 스킵.
+  
+  char* mem = kalloc();  // 메모리 할당
+  memset(mem, 0, sizeof(struct sharedData));
+  p->sharePtr = (struct sharedData*)mem;  // 타입 캐스팅하여 반환
+  
+
   initproc = p;
   if((p->sharePtr->pgdir = setupkvm()) == 0)
     panic("userinit: out of memory?");
@@ -218,7 +224,7 @@ growproc(int n)//atomic하게 실행되어야함 겹치면 메모리 적게 할�
 {
   uint sz;
   struct proc *curproc = myproc();
-  acquire(ptable.lock);
+  acquire(&ptable.lock);
   sz = curproc->sharePtr->sz;
   if(n > 0){
     if((sz = allocuvm(curproc->sharePtr->pgdir, sz, sz + n)) == 0)
@@ -230,7 +236,7 @@ growproc(int n)//atomic하게 실행되어야함 겹치면 메모리 적게 할�
   }
   curproc->sharePtr->sz = sz;
   switchuvm(curproc);
-  release(ptable.lock);
+  release(&ptable.lock);
   return 0;
 }
 
@@ -240,7 +246,8 @@ growproc(int n)//atomic하게 실행되어야함 겹치면 메모리 적게 할�
 int
 fork(void)
 {
-  int i, pid;
+  // int i, pid;
+  int pid;
   struct proc *np;
   struct proc *curproc = myproc();
   
@@ -255,16 +262,17 @@ fork(void)
   //thread를 구현하기 위해선 이 함수를 조금 손봐야 할 듯
   
   //**할당 부분 필요없음. 그냥 현재 프로세스의 shared data를 가리키면 된다,
-  acquire(ptable.lock);
+  acquire(&ptable.lock);
   np->sharePtr = curproc->sharePtr;
-  release(ptable.lock);
-  // if((np->sharePtr->pgdir = copyuvm(curproc->sharePtr->pgdir, curproc->sharePtr->sz)) == 0){
-  //   //카피 실패
-  //   kfree(np->kstack);
-  //   np->kstack = 0;
-  //   np->state = UNUSED;
-  //   return -1;
-  // }
+  release(&ptable.lock);
+  
+  if((np->sharePtr->pgdir = copyuvm(curproc->sharePtr->pgdir, curproc->sharePtr->sz)) == 0){
+    //카피 실패
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+    return -1;
+  }
   
   // np->sharePtr->sz = curproc->sharePtr->sz;
   np->parent = curproc;
@@ -273,10 +281,10 @@ fork(void)
   // Clear %eax so that fork returns 0 in the child. rax는 return value저장
   np->tf->eax = 0;
 
-  // for(i = 0; i < NOFILE; i++)//nofile == 16
-  //   if(curproc->sharePtr->ofile[i])
-  //     np->sharePtr->ofile[i] = filedup(curproc->sharePtr->ofile[i]);//file에 대한 접근 레퍼런스 수 증가.
-  // np->sharePtr->cwd = idup(curproc->sharePtr->cwd);
+  for(int i = 0; i < NOFILE; i++)//nofile == 16
+    if(curproc->sharePtr->ofile[i])
+      np->sharePtr->ofile[i] = filedup(curproc->sharePtr->ofile[i]);//file에 대한 접근 레퍼런스 수 증가.
+  np->sharePtr->cwd = idup(curproc->sharePtr->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
@@ -287,7 +295,7 @@ fork(void)
 
   np->sharePtr->numOfThread++;
   int index;
-  for(int index = 0; index<5;index++){
+  for(index = 0; index<5;index++){
     if(np->sharePtr->isThere[index] == 0){
       np->sharePtr->threads[index] = np;
       break;
@@ -295,7 +303,9 @@ fork(void)
   }
   np->orderOfThread = index;
   np->sharePtr->isThere[index] = 1;
-
+  cprintf("newProc's index is:%d\n",np->orderOfThread);
+  cprintf("newProc is there:%d\n",np->sharePtr->isThere[index]);
+  cprintf("newProc's pid is:%d\n",np->pid);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -312,6 +322,8 @@ exit(void)
   struct proc *curproc = myproc();
   struct proc *p;
   int fd;
+
+  cprintf("Process %d: exiting\n", curproc->pid); // 프로세스 종료 시작 로그(sh제외한 명령어 입력시 재부팅되는 문제)
 
   if(curproc == initproc)
     panic("init exiting");
@@ -342,6 +354,8 @@ exit(void)
         wakeup1(initproc);
     }
   }
+  
+  cprintf("Process %d: turning into zombie\n", curproc->pid); // 좀비 상태로 전환 로그
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;

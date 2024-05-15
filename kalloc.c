@@ -60,9 +60,15 @@ void
 kfree(char *v)
 {
   struct run *r;
+  //디버깅 추가
+  if(v == 0)
+    panic("kfree: attempt to free null pointer");
 
   if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
     panic("kfree");
+  
+  //디버깅 추가
+  // cprintf("kfree: free memory %p\n", v);
 
   // Fill with junk to catch dangling refs.
   memset(v, 1, PGSIZE);
