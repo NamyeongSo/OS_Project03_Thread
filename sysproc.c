@@ -112,3 +112,38 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+//수정 부분.
+int 
+sys_thread_create(void){
+  thread_t *thread;
+  void *(*start_routine)(void *);
+  void *arg;
+
+  if (argptr(0, (char**)&thread, sizeof(thread_t*)) < 0 ||
+      argptr(1, (char**)&start_routine, sizeof(void*)) < 0 ||
+      argptr(2, (char**)&arg, sizeof(void*)) < 0)
+    return -1;
+
+  return thread_create(thread, start_routine, arg);
+}
+
+int
+sys_thread_exit(void)
+{
+  void *retval;
+  if (argptr(0, (char**)&retval, sizeof(void*)) < 0)
+    return -1;
+  thread_exit(retval);
+  return 0;  // This line will never be reached
+}
+
+int
+sys_thread_join(void)
+{
+  thread_t thread;
+  void **retval;
+  if (argint(0, (int*)&thread) < 0 || argptr(1, (char**)&retval, sizeof(void*)) < 0)
+    return -1;
+  return thread_join(thread, retval);
+}

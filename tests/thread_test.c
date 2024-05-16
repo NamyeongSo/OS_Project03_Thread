@@ -99,6 +99,7 @@ void *thread_sbrk(void *arg)
   thread_exit(arg);
   return 0;
 }
+
 void create_all(int n, void *(*entry)(void *))
 {
   int i;

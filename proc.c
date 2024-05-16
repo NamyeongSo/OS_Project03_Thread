@@ -254,6 +254,7 @@ fork(void)
   
   // Allocate process.
   if((np = allocproc()) == 0){//빈 프로세스가 없음. ptable에서 찾는 거 같은데...
+    cprintf("allocproc Failed!\n");
     return -1;
   }
 
@@ -262,11 +263,17 @@ fork(void)
   //thread를 구현하기 위해선 이 함수를 조금 손봐야 할 듯
   
   char* mem = kalloc();  // 메모리 할당
+  if (mem == 0) {
+    cprintf("kalloc Failed!\n");
+    np->state = UNUSED;
+    return -1;
+  }
   memset(mem, 0, sizeof(struct sharedData));
   np->sharePtr = (struct sharedData*)mem;  // 타입 캐스팅하여 반환
   
   if((np->sharePtr->pgdir = copyuvm(curproc->sharePtr->pgdir, curproc->sharePtr->sz)) == 0){
     //카피 실패
+    cprintf("copyuvm Failed!\n");
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
@@ -296,17 +303,15 @@ fork(void)
   int index;
   for(index = 1; index<5;index++){
     np->sharePtr->isThere[index] = 0;
-    np->sharePtr->threads[index] = np;
   }
   np->orderOfThread = 0;
   np->sharePtr->isThere[index] = 1;
 
-  cprintf("newProc's index is:%d\n",np->orderOfThread);
-  cprintf("newProc is there:%d\n",np->sharePtr->isThere[index]);
-  cprintf("newProc's pid is:%d\n",np->pid);
+
   np->state = RUNNABLE;
 
   release(&ptable.lock);
+  cprintf("fork Success\n");
 
   return pid;
 }
@@ -352,7 +357,6 @@ exit(void)
         wakeup1(initproc);
     }
   }
-  
   cprintf("Process %d: turning into zombie\n", curproc->pid); // 좀비 상태로 전환 로그
 
   // Jump into the scheduler, never to return.
@@ -418,7 +422,6 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
   for(;;){
     // Enable interrupts on this processor.
     sti();
@@ -624,4 +627,149 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+
+//API정의
+int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg){
+  //start_routine()하면 실행된다는 인자로 넘어온 함수가 실행된다는 거 같은디.
+  //일단 fork하고 이게 새로 생긴 thread다 -> 연결 로직 실행하고
+  //그 다음에 start routine실행하면 끝?
+  struct proc* np;
+  int pid = fork();
+  //요기부터 shed까지 디버그용
+  // for(struct proc* dp = ptable.proc; dp < &ptable.proc[NPROC]; dp++) {
+  //   if(dp->pid > 0){
+  //     cprintf("TOTAL Processes:%d AND its State is:%d\n",dp->pid, dp->state);
+  //   }
+  // } 
+  yield();
+  //
+  if(pid < 0){
+    return -1;
+  }
+  
+  if(pid == 0){
+    cprintf("is child?\n"); 
+    //자식 thread??
+    np = myproc();
+    int fd;
+    acquire(&ptable.lock);
+    //여기부터는 내 기우임.
+    for(fd = 0; fd < NOFILE; fd++){
+      if(np->sharePtr->ofile[fd]){
+        fileclose(np->sharePtr->ofile[fd]);
+        np->sharePtr->ofile[fd] = 0;
+      }
+    }
+    begin_op();
+    iput(np->sharePtr->cwd);
+    end_op();
+    np->sharePtr->cwd = 0; 
+    //여기까지
+    *thread = np->pid;
+    //start_routine에서 시작해야하는 걸 구현 못하겠음
+    np->tf->eip = (uint)*start_routine; // 함수의 시작 주소로 EIP 설정
+    //수정해야할 수도...esp코드
+    np->tf->esp = (uint)(np->kstack + KSTACKSIZE);  // 스택 포인터 초기화
+    *((uint*)(np->tf->esp)) = (uint)arg; // start_routine 인자 설정
+    release(&ptable.lock);
+    if(np->sharePtr == np->parent->sharePtr) return 0;
+    else return -1;
+  }else{
+    int index;
+    for(np = ptable.proc; np < &ptable.proc[NPROC]; np++) {
+      if(np->pid == pid && np->parent == myproc()) {
+        np->sharePtr = np->parent->sharePtr;
+        for(index =0; index<5 ; index++){
+          if(np->sharePtr->isThere[index] == 0){
+            np->sharePtr->isThere[index] = 1;
+            np->sharePtr->threads[index] = np;
+            np->sharePtr->numOfThread += 1;
+            np->orderOfThread = index;
+            break;
+          }
+        }
+      // cprintf("newProc's index is:%d\n",np->orderOfThread);
+      // cprintf("newProc is there:%d\n",np->sharePtr->isThere[index]);
+      // cprintf("newProc's pid is:%d\n",np->pid);
+      break;
+    }
+  }
+  cprintf("my PID is: %d, and my Parent ID is: %d, RETURN PID IS:%d\n", myproc()->pid, myproc()->parent->pid, pid);
+  return 0;
+  }
+}
+
+void thread_exit(void *retval){//thread가 마지막일 때만 Shared Data를 삭제해야함.
+  struct proc *curproc = myproc();
+  struct proc *p;
+  int fd;
+  curproc->retval = retval;
+  cprintf("Process %d: exiting\n", curproc->pid); // 프로세스 종료 시작 로그(sh제외한 명령어 입력시 재부팅되는 문제)
+
+  if(curproc == initproc)
+    panic("init exiting");
+
+  // Close all open files.
+  if(curproc->sharePtr->numOfThread == 1){
+    curproc->sharePtr->numOfThread--;
+    for(fd = 0; fd < NOFILE; fd++){
+      if(curproc->sharePtr->ofile[fd]){
+        fileclose(curproc->sharePtr->ofile[fd]);
+        curproc->sharePtr->ofile[fd] = 0;
+      }
+    }
+
+    begin_op();
+    iput(curproc->sharePtr->cwd);
+    end_op();
+    curproc->sharePtr->cwd = 0;
+  }
+
+  acquire(&ptable.lock);
+
+  // Parent might be sleeping in wait().
+  wakeup1(curproc->parent);
+
+  // Pass abandoned children to init.
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->parent == curproc){
+      p->parent = initproc;
+      if(p->state == ZOMBIE)
+        wakeup1(initproc);
+    }
+  }
+  
+  cprintf("Process %d: turning into zombie\n", curproc->pid); // 좀비 상태로 전환 로그
+
+  // Jump into the scheduler, never to return.
+  curproc->state = ZOMBIE;
+  sched();
+  panic("zombie exit");
+}
+
+int thread_join(thread_t thread, void **retval) {
+  struct proc *p = myproc();
+  struct proc *t;
+  acquire(&ptable.lock);
+  for(;;) {
+    for(t = ptable.proc; t < &ptable.proc[NPROC]; t++) {
+      if(t->pid == thread && t->parent == p) {
+        if(t->state == ZOMBIE) {
+          if(retval) {
+            *retval = t->retval; // Retrieve the return value
+          }
+          // Clean up resources
+          kfree(t->kstack);
+          t->state = UNUSED;
+          release(&ptable.lock);
+          return 0;
+        }
+        sleep(p, &ptable.lock); // Wait for the thread to exit
+      }
+    }
+  }
+  release(&ptable.lock);
+  return -1; // Thread not found or not a child thread
 }

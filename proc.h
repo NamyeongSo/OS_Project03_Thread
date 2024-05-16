@@ -81,6 +81,7 @@ struct proc {
   char name[16];               // Process name (debugging)
   struct sharedData* sharePtr; // 같은 프로세스의 thread는 같은 공유데이터를 가리켜야함
   int orderOfThread;             // 필요할 지는 모르겠음.
+  void* retval;
 };
 
 void free_proc(struct proc *curproc);
@@ -91,6 +92,10 @@ typedef struct {
 } ptableStruct;
 
 extern ptableStruct ptable;
+int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg);
+void thread_exit(void *retval);
+int thread_join(thread_t thread, void **retval);
+
 
 
 // Process memory is laid out contiguously, low addresses first:
