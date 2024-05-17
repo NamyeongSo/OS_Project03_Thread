@@ -65,8 +65,8 @@ struct sharedData {
   struct file *ofile[NOFILE];  // Open files->공유가능
   struct inode *cwd;           // Current directory->공유가능
   int numOfThread;               // shared Data와 연결된 thread가 몇 개인지 판단.
-  struct proc* threads[5];     // thread의 max 개수가 몇개일까나
-  int isThere[5];              //threads의 특정 위치에 존재하는겨 아닌겨.
+  struct proc* threads[6];     // thread의 max 개수가 몇개일까나
+  int isThere[6];              //threads의 특정 위치에 존재하는겨 아닌겨.
 };
 
 struct proc {

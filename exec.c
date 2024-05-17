@@ -1,31 +1,70 @@
 #include "types.h"
+#include "defs.h"
 #include "param.h"
 #include "memlayout.h"
 #include "mmu.h"
-#include "proc.h"
-#include "defs.h"
 #include "x86.h"
+#include "proc.h"
+#include "spinlock.h"
 #include "elf.h"
-#include <stddef.h>
 
-//thread다 free하고 그 다음에 딱 하나 thread에 exec해주는 로직
-//지금 로직에서 free만 추가해주면 됨.굿
+extern char data[];  // defined by the kernel linker script in kernel.ld
+pde_t *kpgdir;       // for use in scheduler()
 
-int
-exec(char *path, char **argv)
+// Function to free resources of a process (thread)
+void free_proc(struct proc *curproc) {
+  // Free the kernel stack
+  if(curproc->kstack)
+    kfree(curproc->kstack);
+  curproc->kstack = 0;
+  // Free the process memory
+  if(curproc->sharePtr == 0) {
+    freevm(curproc->sharePtr->pgdir);
+  }
+  curproc->pid = 0;
+  curproc->parent = 0;
+  curproc->tf = 0;
+  curproc->context = 0;
+  curproc->chan = 0;
+  curproc->killed = 0;
+  curproc->state = UNUSED;
+  memset(curproc->name, 0, sizeof(curproc->name));
+  curproc->sharePtr = 0;
+  curproc->orderOfThread = 0;
+  curproc->retval = 0;
+}
+
+// Kill all threads except the current one and free resources
+void kill_other_threads(struct proc *curproc) {
+  int i;
+  acquire(&ptable.lock);
+  for(i = 0; i < 6; i++) {
+    if(curproc->sharePtr->isThere[i] && curproc->sharePtr->threads[i] != curproc) {
+      struct proc *p = curproc->sharePtr->threads[i];
+      p->killed = 1;
+      if(p->state == SLEEPING)
+        p->state = RUNNABLE;
+      free_proc(p);
+    }
+  }
+  release(&ptable.lock);
+}
+
+// Load the new program
+int exec(char *path, char **argv)
 {
   char *s, *last;
   int i, off;
   uint argc, sz, sp, ustack[3+MAXARG+1];
   struct elfhdr elf;
-  struct inode *ip;
   struct proghdr ph;
+  struct inode *ip;
   pde_t *pgdir, *oldpgdir;
   struct proc *curproc = myproc();
-  // int order = curproc->orderOfThread;
+
+  kill_other_threads(curproc);
 
   begin_op();
-
   if((ip = namei(path)) == 0){
     end_op();
     cprintf("exec: fail\n");
@@ -43,7 +82,6 @@ exec(char *path, char **argv)
   if((pgdir = setupkvm()) == 0)
     goto bad;
 
-
   // Load program into memory.
   sz = 0;
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
@@ -52,8 +90,6 @@ exec(char *path, char **argv)
     if(ph.type != ELF_PROG_LOAD)
       continue;
     if(ph.memsz < ph.filesz)
-      goto bad;
-    if(ph.vaddr + ph.memsz < ph.vaddr)
       goto bad;
     if((sz = allocuvm(pgdir, sz, ph.vaddr + ph.memsz)) == 0)
       goto bad;
@@ -65,14 +101,6 @@ exec(char *path, char **argv)
   iunlockput(ip);
   end_op();
   ip = 0;
-
-  //디버깅을 위해서 잠시 지우기
-  // for(int i = 0; i<5; i++){
-  //   if(i != order && curproc->sharePtr->isThere[i] == 1){
-  //     if(curproc->sharePtr->threads[i] != NULL)
-  //       free_proc(curproc->sharePtr->threads[i]);
-  //   }
-  // }
 
   // Allocate two pages at the next page boundary.
   // Make the first inaccessible.  Use the second as the user stack.
@@ -108,22 +136,14 @@ exec(char *path, char **argv)
   safestrcpy(curproc->name, last, sizeof(curproc->name));
 
   // Commit to the user image.
-  cprintf("Value of oldPgdir: %d\n", curproc->sharePtr->pgdir);
   oldpgdir = curproc->sharePtr->pgdir;
   curproc->sharePtr->pgdir = pgdir;
   curproc->sharePtr->sz = sz;
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
-  curproc->orderOfThread = 0;
-  curproc->sharePtr->isThere[0] = 1;
-  for(int i = 1; i < 5; i++){
-    curproc->sharePtr->isThere[i] = 0;
-  }
-  curproc->sharePtr->threads[0] = curproc;
-  curproc->sharePtr->numOfThread = 1;
-  //
   switchuvm(curproc);
   freevm(oldpgdir);
+  
   return 0;
 
  bad:
