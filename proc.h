@@ -83,6 +83,7 @@ struct proc {
   int orderOfThread;             // 필요할 지는 모르겠음.
   void* retval;
   int imMaster;
+  uint stack;                 // Stack start_address
 };
 
 void free_proc(struct proc *curproc);

@@ -388,9 +388,12 @@ int wait(void) {
         // Scan through table looking for exited children.
         havekids = 0;
         for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-            if(p->parent != curproc)
+            if(p->parent != curproc){
+                // cprintf("I dont want to wait!\n");
                 continue;
+              }
             havekids = 1;
+            // cprintf("My baby is:%d\n", p->pid);
             if(p->state == ZOMBIE && p->imMaster == 1) {//exit으로 인한 wait은 프로세서 단으로 처리. 즉 master(tid = 0)이 처리해야함
                 pid = p->pid;
                 cprintf("p->sharePtr->threads[%d](pid:%d)->state:%d\n", p->orderOfThread, p->pid,p->state);                    
@@ -412,12 +415,13 @@ int wait(void) {
                     p->sharePtr->threads[i]->state = UNUSED;
                     p->sharePtr->numOfThread--;
                   }
-                  
                 }
+                havekids = 0;
                 release(&ptable.lock);
                 return pid;
             }
         }
+        // cprintf("have KIDs:%d", havekids);
 
         // No point waiting if we don't have any children.
         if(!havekids || curproc->killed) {
@@ -604,7 +608,7 @@ int kill(int pid) {
     int killedCount = 0;
     acquire(&ptable.lock);
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-      cprintf("KILL TABLE SEARCH!!\n");
+      // cprintf("KILL TABLE SEARCH!!\n");
         if (p->pid == pid) {
             struct proc *killed_proc;
             for (int i = 0; i < 6; i++) {
@@ -779,12 +783,12 @@ int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg) {
         release(&ptable.lock);
         return -1;
     }
+    np->stack = sp;
     np->tf->eip = (uint)start_routine;
     np->tf->esp = sp;
     np->imMaster = 0;
     // Update state to RUNNABLE.
     np->state = RUNNABLE;
-    *thread = np->pid;
 
     // thread배정문 어디감.->내가 자식이면 연결하도록
     for(int index = 0; index < 6; index++) {
@@ -796,6 +800,7 @@ int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg) {
          break;
       }
     }
+    *thread = np->orderOfThread;
     // for(int i = 0; i<5; i++){
     //   cprintf("%dst setting in threadCreate\n np->sharePtr->isThere[index]:%d \n np->sharePtr->threads[index]:%d \nTID is%d\n",i,np->sharePtr->isThere[i],np->sharePtr->threads[i]->pid,np->sharePtr->threads[i]->orderOfThread);
     // }
@@ -814,32 +819,21 @@ void thread_exit(void *retval) {
 
     acquire(&ptable.lock);
 
-    curproc->retval = retval;
+
     // Remove the thread from the sharedData structure.
-    curproc->sharePtr->isThere[curproc->orderOfThread] = 0;
-    curproc->sharePtr->numOfThread--;
-
-    // If this is the last thread, close all open files and release the current working directory.
-    if (curproc->sharePtr->numOfThread == 0) {
-        for (int fd = 0; fd < NOFILE; fd++) {
-            if (curproc->sharePtr->ofile[fd]) {
-                fileclose(curproc->sharePtr->ofile[fd]);
-                curproc->sharePtr->ofile[fd] = 0;
-            }
-        }
-        release(&ptable.lock);
-        begin_op();
-        iput(curproc->sharePtr->cwd);
-        end_op();
-        acquire(&ptable.lock);
-        curproc->sharePtr->cwd = 0;
+    int i;
+    for(i = 0; i<6; i++){
+      if(curproc->sharePtr->threads[i]->imMaster == 1){
+        break;
+      }
     }
-
+    wakeup1(curproc->sharePtr->threads[i]);
     // Mark the current thread as ZOMBIE.
+    curproc->sharePtr->isThere[curproc->orderOfThread] = 0;
     curproc->state = ZOMBIE;
+    curproc->retval = retval;
 
     // Wake up the parent process if it is waiting.
-    wakeup1(curproc->parent);
 
     sched();
     panic("zombie exit");
@@ -848,39 +842,70 @@ int thread_join(thread_t thread, void **retval) {
     struct proc *curproc = myproc();
     struct proc *p;
 
+    if (curproc->imMaster != 1) {
+        // cprintf("Current process %d is not a master process. Cannot join a thread.\n", curproc->pid);
+        return -1;
+    }
+    if(curproc)
     acquire(&ptable.lock);
+    // cprintf("ptable.lock acquired by thread_join\n");
+
     for (;;) {
+        int thread_found = 0;
+
+        // find expected thread
         for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-            cprintf("thread argument is:%d, p->parent:%d, curpoc:%d\n", thread, p->parent->pid, curproc->pid);
-            if (p->pid == thread && p->parent == curproc) {
-                    if (p->state == ZOMBIE&&p->imMaster == 0) {
-                    if (retval) {
-                        *retval = p->retval; // Retrieve the return value
-                    }
-                    // Clean up resources
-                    if (p->kstack) {
-                        kfree(p->kstack);
-                        p->kstack = 0;
-                    }
-                    if (p->sharePtr->numOfThread == 1) {
-                        freevm(p->sharePtr->pgdir);
-                    }
-                    p->pid = 0;
-                    p->parent = 0;
-                    p->name[0] = 0;
-                    p->killed = 0;
-                    p->state = UNUSED;
-                    p->sharePtr->numOfThread--;
-                    release(&ptable.lock);
-                    return 0;
+            // cprintf("Checking thread: pid=%d, state=%d, name=%s\n", p->pid, p->state, p->name);
+            if (p->orderOfThread == thread && p->state == ZOMBIE && p->parent == curproc->parent&& p->imMaster != 1) {
+                thread_found = 1;
+                // cprintf("Found thread %d in ZOMBIE state\n", thread);
+                if (retval != 0) {
+                    *retval = p->retval;
                 }
-                sleep(curproc, &ptable.lock); // Wait for the thread to exit
+                p->retval = 0;
+
+                // Deallocate resources
+                // cprintf("Deallocating resources for thread %d\n", thread);
+                kfree(p->kstack);
+                p->kstack = 0;
+                p->state = UNUSED;
+                p->pid = 0;
+                p->parent = 0;
+                p->killed = 0;
+                p->name[0] = 0;
+                int numOfThread = curproc->sharePtr->numOfThread;
+                p->imMaster = 0;    
+                p->orderOfThread = 0;
+                curproc->sharePtr->numOfThread--;
+                p->sharePtr = 0;
+                p->stack = 0;
+                release(&ptable.lock);
+                // cprintf("ptable.lock released after joining thread %d, numOfThread:%d\n", thread, numOfThread);
+                
+                for(struct proc* proc = ptable.proc; proc < &ptable.proc[NPROC]; proc++) {
+                    if(proc->state != UNUSED) {
+                        // cprintf("PID: %d, PPID: %d ,State: %d, Name: %s\n", proc->pid, proc->parent->pid,  proc->state, proc->name);
+                    }
+                }
+                
+                return 0;
             }
         }
-        // If no thread is found, break out of the loop
-        if (p == &ptable.proc[NPROC]) {
+
+        if (!thread_found) {
+            // cprintf("Thread %d not found, sleeping...\n", thread);
+            sleep(curproc, &ptable.lock);
+            // cprintf("Woke up from sleep, retrying to find thread %d\n", thread);
+        }
+
+        // master process is terminated
+        if (curproc->killed) {
+            // cprintf("Current process %d is killed\n", curproc->pid);
             release(&ptable.lock);
-            return -1; // Thread not found or not a child thread
+            return -1;
         }
     }
+
+    release(&ptable.lock);
+    return -1;
 }
