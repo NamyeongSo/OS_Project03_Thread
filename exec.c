@@ -141,6 +141,7 @@ int exec(char *path, char **argv)
   curproc->sharePtr->sz = sz;
   curproc->tf->eip = elf.entry;  // main
   curproc->tf->esp = sp;
+  curproc->imMaster = 1;
   switchuvm(curproc);
   freevm(oldpgdir);
   

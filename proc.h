@@ -82,6 +82,7 @@ struct proc {
   struct sharedData* sharePtr; // 같은 프로세스의 thread는 같은 공유데이터를 가리켜야함
   int orderOfThread;             // 필요할 지는 모르겠음.
   void* retval;
+  int imMaster;
 };
 
 void free_proc(struct proc *curproc);
@@ -90,6 +91,7 @@ typedef struct {
     struct spinlock lock;
     struct proc proc[NPROC];
 } ptableStruct;
+
 
 extern ptableStruct ptable;
 int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg);
