@@ -340,7 +340,7 @@ void exit(void) {
 
     acquire(&ptable.lock);
 
-    // Wake up the parent process.
+    // Parent might be sleeping in wait().
     wakeup1(curproc->parent);
 
     // Pass abandoned children to init.
@@ -351,7 +351,7 @@ void exit(void) {
                 wakeup1(initproc);
         }
     }
-    // Terminate all threads in the current process.
+    //현재 프로세스의 모든 thread다 terminate
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
         if(p->sharePtr == curproc->sharePtr && p != curproc) {
             p->state = ZOMBIE;
@@ -359,19 +359,9 @@ void exit(void) {
     }
 
 
-    // Set the current process as ZOMBIE.
+    // Jump into the scheduler, never to return.
     curproc->state = ZOMBIE;
 
-
-    // Print current process table and states for debugging.
- 
-  struct proc *proc;
-  for(proc = ptable.proc; proc < &ptable.proc[NPROC]; proc++) {
-      if(proc->state != UNUSED) {
-          cprintf("PID: %d, State: %d, Name: %s\n", proc->pid, proc->state, proc->name);
-      }
-  }
-  
     sched();
     panic("zombie exit");
 }
@@ -388,18 +378,14 @@ int wait(void) {
         // Scan through table looking for exited children.
         havekids = 0;
         for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-            if(p->parent != curproc){
-                // cprintf("I dont want to wait!\n");
-                continue;
-              }
+            if(p->parent != curproc)
+              continue;
+            
             havekids = 1;
-            // cprintf("My baby is:%d\n", p->pid);
             if(p->state == ZOMBIE && p->imMaster == 1) {//exit으로 인한 wait은 프로세서 단으로 처리. 즉 master(tid = 0)이 처리해야함
                 pid = p->pid;
-                cprintf("p->sharePtr->threads[%d](pid:%d)->state:%d\n", p->orderOfThread, p->pid,p->state);                    
                 for(int  i= 0; i<6; i++){
                   if(p->sharePtr->threads[i]->state == ZOMBIE && p->sharePtr->threads[i]->pid != 0){
-                    cprintf("p->sharePtr->threads[%d](pid:%d)->state:%d\n", p->sharePtr->threads[i]->orderOfThread, p->sharePtr->threads[i]->pid,p->sharePtr->threads[i]->state);
                     if (p->kstack) {
                         kfree(p->kstack);
                         p->kstack = 0;
@@ -605,24 +591,19 @@ wakeup(void *chan)
 // to user space (see trap in trap.c).
 int kill(int pid) {
     struct proc *p;
-    int killedCount = 0;
     acquire(&ptable.lock);
     for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       // cprintf("KILL TABLE SEARCH!!\n");
         if (p->pid == pid) {
             struct proc *killed_proc;
             for (int i = 0; i < 6; i++) {
-                if (p->sharePtr->isThere[i]) {
+                if (p->sharePtr->threads[i]->pid != 0) {
                     killed_proc = p->sharePtr->threads[i];
                     killed_proc->killed = 1;
-                    // Debugging output
-                    cprintf("Killing process: PID: %d\n", killed_proc->pid);
-
                     // Wake process from sleep if necessary.
                     if (killed_proc->state == SLEEPING)
                         killed_proc->state = RUNNABLE;
 
-                    killedCount++;
                 }
             }
             release(&ptable.lock);
@@ -741,171 +722,148 @@ procdump(void)
 //   return 0;
 //   }
 // }
+
 int thread_create(thread_t *thread, void *(*start_routine)(void *), void *arg) {
-    struct proc *np;
-    struct proc *curproc = myproc();
-    uint sz, sp, ustack[2];
+  struct proc *np;
+  struct proc *curproc = myproc();
+  uint sz, sp, ustack[2];
 
-    // Allocate process.
-    // if((int)arg < 4){//0번은 이미 만들어져있다  결국 상대가 원하는 거 -1개만큼 만들어야한다. 
-    if ((np = allocproc()) == 0) {
-        cprintf("allocproc Failed!\n");
-        return -1;
+  // Allocate process.
+  // if((int)arg < 4){//0번은 이미 만들어져있다  결국 상대가 원하는 거 -1개만큼 만들어야한다. 
+  if ((np = allocproc()) == 0) {
+      cprintf("allocproc Failed!\n");
+      return -1;
+  }
+
+  // Share the same address space.
+  acquire(&ptable.lock);
+
+  np->sharePtr = curproc->sharePtr;
+
+  //이게 키였네 -> np->parent도 curp의 parent로 해줌으로써 crop될 수 있도록 했다.
+  np->parent = curproc->parent;
+  *np->tf = *curproc->tf;
+
+  // Clear %eax so that fork returns 0 in the child.
+  np->tf->eax = 0;
+
+  //새로운 thread에 userstack할당.
+  sz = np->sharePtr->sz;
+  if((sz = allocuvm(np->sharePtr->pgdir, sz, sz + 2*PGSIZE)) == 0) {
+      np->state = UNUSED;
+      release(&ptable.lock);
+      return -1;
+  }
+  clearpteu(np->sharePtr->pgdir, (char*)(sz - 2*PGSIZE));
+  np->sharePtr->sz = sz;
+
+  // stack setup과정->함수 위치등을 정해준다.
+  sp = sz;
+  sp -= 8;
+  ustack[0] = 0xffffffff;
+  ustack[1] = (uint)arg;
+  if(copyout(np->sharePtr->pgdir, sp, ustack, 8) < 0) {
+      np->state = UNUSED;
+      release(&ptable.lock);
+      return -1;
+  }
+  np->stack = sp;
+  np->tf->eip = (uint)start_routine;
+  np->tf->esp = sp;
+  np->imMaster = 0;
+
+  np->state = RUNNABLE;
+  // thread배정문->내가 자식이면 연결하도록
+  for(int index = 0; index < 6; index++) {
+    if(np->sharePtr->isThere[index] == 0) {
+       np->sharePtr->isThere[index] = 1;
+       np->sharePtr->threads[index] = np;
+       np->sharePtr->numOfThread += 1;
+       np->orderOfThread = index;
+       break;
     }
+  }
+  *thread = np->orderOfThread;
+  release(&ptable.lock);
+  return 0;
 
-    // Share the same address space.
-    acquire(&ptable.lock);
-    np->sharePtr = curproc->sharePtr;
-    //이게 키였네 -> np->parent도 curp의 parent로 해줌으로써 crop될 수 있도록 했다.
-    np->parent = curproc->parent;
-    *np->tf = *curproc->tf;
-
-    // Clear %eax so that fork returns 0 in the child.
-    np->tf->eax = 0;
-
-    // Allocate user stack for the new thread.
-    sz = np->sharePtr->sz;
-    if((sz = allocuvm(np->sharePtr->pgdir, sz, sz + 2*PGSIZE)) == 0) {
-        np->state = UNUSED;
-        release(&ptable.lock);
-        return -1;
-    }
-    clearpteu(np->sharePtr->pgdir, (char*)(sz - 2*PGSIZE));
-    np->sharePtr->sz = sz;
-
-    // Set up stack for new thread.
-    sp = sz;
-    sp -= 8;
-    ustack[0] = 0xffffffff;
-    ustack[1] = (uint)arg;
-    if(copyout(np->sharePtr->pgdir, sp, ustack, 8) < 0) {
-        np->state = UNUSED;
-        release(&ptable.lock);
-        return -1;
-    }
-    np->stack = sp;
-    np->tf->eip = (uint)start_routine;
-    np->tf->esp = sp;
-    np->imMaster = 0;
-    // Update state to RUNNABLE.
-    np->state = RUNNABLE;
-
-    // thread배정문 어디감.->내가 자식이면 연결하도록
-    for(int index = 0; index < 6; index++) {
-      if(np->sharePtr->isThere[index] == 0) {
-         np->sharePtr->isThere[index] = 1;
-         np->sharePtr->threads[index] = np;
-         np->sharePtr->numOfThread += 1;
-         np->orderOfThread = index;
-         break;
-      }
-    }
-    *thread = np->orderOfThread;
-    // for(int i = 0; i<5; i++){
-    //   cprintf("%dst setting in threadCreate\n np->sharePtr->isThere[index]:%d \n np->sharePtr->threads[index]:%d \nTID is%d\n",i,np->sharePtr->isThere[i],np->sharePtr->threads[i]->pid,np->sharePtr->threads[i]->orderOfThread);
-    // }
-    // cprintf("Thread Create!!!!\n");
-    // for(struct proc* proc = ptable.proc; proc < &ptable.proc[NPROC]; proc++) {
-    //   if(proc->state != UNUSED) {
-    //     cprintf("PID: %d, State: %d, Name: %s\n", proc->pid, proc->state, proc->name);
-    //   }
-    // }
-    release(&ptable.lock);
-
-    return 0;
 }
 void thread_exit(void *retval) {
-    struct proc *curproc = myproc();
+  struct proc *curproc = myproc();
 
-    acquire(&ptable.lock);
+  acquire(&ptable.lock);
 
 
-    // Remove the thread from the sharedData structure.
-    int i;
-    for(i = 0; i<6; i++){
-      if(curproc->sharePtr->threads[i]->imMaster == 1){
-        break;
+  //SharePtr에서 Master thread를 깨운다. -> Master Thread는
+  //join에서 crop하는 역할을 한다.
+  int i;
+  for(i = 0; i<6; i++){
+    if(curproc->sharePtr->threads[i]->imMaster == 1){
+      break;
+    }
+  }
+  wakeup1(curproc->sharePtr->threads[i]);
+
+  //curproc을 zombie로 세팅
+  curproc->sharePtr->isThere[curproc->orderOfThread] = 0;
+  curproc->state = ZOMBIE;
+  curproc->retval = retval;
+
+  sched();
+  panic("zombie exit");
+}
+
+int thread_join(thread_t thread, void **retval) {
+  struct proc *curproc = myproc();
+  struct proc *p;
+  //master일떄만 join한다.
+  //-> 중복으로 free되는 것을 방지한다.
+  if (curproc->imMaster != 1) {
+      return -1;
+  }
+  if(curproc)
+  acquire(&ptable.lock);
+
+  for (;;) {
+    int thread_found = 0;
+
+    for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+      if (p->orderOfThread == thread && p->state == ZOMBIE && p->parent == curproc->parent&& p->imMaster != 1) {
+        thread_found = 1;
+        if (retval != 0) {
+            *retval = p->retval;
+        }
+        p->retval = 0;
+
+        //Thread Deallocate
+        kfree(p->kstack);
+        p->kstack = 0;
+        p->state = UNUSED;
+        p->pid = 0;
+        p->parent = 0;
+        p->killed = 0;
+        p->name[0] = 0;
+        p->imMaster = 0;    
+        p->orderOfThread = 0;
+        curproc->sharePtr->numOfThread--;
+        p->sharePtr = 0;
+        p->stack = 0;
+        release(&ptable.lock);
+        return 0;
       }
     }
-    wakeup1(curproc->sharePtr->threads[i]);
-    // Mark the current thread as ZOMBIE.
-    curproc->sharePtr->isThere[curproc->orderOfThread] = 0;
-    curproc->state = ZOMBIE;
-    curproc->retval = retval;
 
-    // Wake up the parent process if it is waiting.
+    if (!thread_found) {
+      sleep(curproc, &ptable.lock);
+    }
 
-    sched();
-    panic("zombie exit");
-}
-int thread_join(thread_t thread, void **retval) {
-    struct proc *curproc = myproc();
-    struct proc *p;
-
-    if (curproc->imMaster != 1) {
-        // cprintf("Current process %d is not a master process. Cannot join a thread.\n", curproc->pid);
+    // master thread가 terminated되었을 때
+    if (curproc->killed) {
+        release(&ptable.lock);
         return -1;
     }
-    if(curproc)
-    acquire(&ptable.lock);
-    // cprintf("ptable.lock acquired by thread_join\n");
+  }
 
-    for (;;) {
-        int thread_found = 0;
-
-        // find expected thread
-        for (p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
-            // cprintf("Checking thread: pid=%d, state=%d, name=%s\n", p->pid, p->state, p->name);
-            if (p->orderOfThread == thread && p->state == ZOMBIE && p->parent == curproc->parent&& p->imMaster != 1) {
-                thread_found = 1;
-                // cprintf("Found thread %d in ZOMBIE state\n", thread);
-                if (retval != 0) {
-                    *retval = p->retval;
-                }
-                p->retval = 0;
-
-                // Deallocate resources
-                // cprintf("Deallocating resources for thread %d\n", thread);
-                kfree(p->kstack);
-                p->kstack = 0;
-                p->state = UNUSED;
-                p->pid = 0;
-                p->parent = 0;
-                p->killed = 0;
-                p->name[0] = 0;
-                int numOfThread = curproc->sharePtr->numOfThread;
-                p->imMaster = 0;    
-                p->orderOfThread = 0;
-                curproc->sharePtr->numOfThread--;
-                p->sharePtr = 0;
-                p->stack = 0;
-                release(&ptable.lock);
-                // cprintf("ptable.lock released after joining thread %d, numOfThread:%d\n", thread, numOfThread);
-                
-                for(struct proc* proc = ptable.proc; proc < &ptable.proc[NPROC]; proc++) {
-                    if(proc->state != UNUSED) {
-                        // cprintf("PID: %d, PPID: %d ,State: %d, Name: %s\n", proc->pid, proc->parent->pid,  proc->state, proc->name);
-                    }
-                }
-                
-                return 0;
-            }
-        }
-
-        if (!thread_found) {
-            // cprintf("Thread %d not found, sleeping...\n", thread);
-            sleep(curproc, &ptable.lock);
-            // cprintf("Woke up from sleep, retrying to find thread %d\n", thread);
-        }
-
-        // master process is terminated
-        if (curproc->killed) {
-            // cprintf("Current process %d is killed\n", curproc->pid);
-            release(&ptable.lock);
-            return -1;
-        }
-    }
-
-    release(&ptable.lock);
-    return -1;
+  release(&ptable.lock);
+  return -1;
 }

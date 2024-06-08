@@ -3,7 +3,6 @@
 
 #include "spinlock.h"
 
-//여러 syscall에 lock을 걸어주기 위함.
 
 // Per-CPU state
 struct cpu {
@@ -64,9 +63,9 @@ struct sharedData {
   pde_t* pgdir;                // Page table->공유가능
   struct file *ofile[NOFILE];  // Open files->공유가능
   struct inode *cwd;           // Current directory->공유가능
-  int numOfThread;               // shared Data와 연결된 thread가 몇 개인지 판단.
-  struct proc* threads[6];     // thread의 max 개수가 몇개일까나
-  int isThere[6];              //threads의 특정 위치에 존재하는겨 아닌겨.
+  int numOfThread;              // shared Data와 연결된 thread가 몇 개인지 판단.
+  struct proc* threads[6];     // thread의 max 개수는 5개 -> master + thread = 6
+  int isThere[6];              //threads의 특정 위치에 존재하는지 판단.
 };
 
 struct proc {
@@ -80,15 +79,15 @@ struct proc {
   int killed;                  // If non-zero, have been killed
   char name[16];               // Process name (debugging)
   struct sharedData* sharePtr; // 같은 프로세스의 thread는 같은 공유데이터를 가리켜야함
-  int orderOfThread;             // 필요할 지는 모르겠음.
-  void* retval;
-  int imMaster;
-  uint stack;                 // Stack start_address
+  int orderOfThread;           // tid역할.
+  void* retval;                // retval저장
+  int imMaster;                // 마스터 thread인지 판단하는 역할
+  uint stack;                  // Stack의 start address
 };
 
 void free_proc(struct proc *curproc);
 
-typedef struct {
+typedef struct {//exec에서 사용하기 위해 ptable구조체를 만들고 extern으로 선언했다.
     struct spinlock lock;
     struct proc proc[NPROC];
 } ptableStruct;
@@ -100,11 +99,5 @@ void thread_exit(void *retval);
 int thread_join(thread_t thread, void **retval);
 
 
-
-// Process memory is laid out contiguously, low addresses first:
-//   text
-//   original data and bss
-//   fixed-size stack
-//   expandable heap
 
 #endif

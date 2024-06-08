@@ -11,13 +11,11 @@
 extern char data[];  // defined by the kernel linker script in kernel.ld
 pde_t *kpgdir;       // for use in scheduler()
 
-// Function to free resources of a process (thread)
+// thread free함수
 void free_proc(struct proc *curproc) {
-  // Free the kernel stack
   if(curproc->kstack)
     kfree(curproc->kstack);
   curproc->kstack = 0;
-  // Free the process memory
   if(curproc->sharePtr == 0) {
     freevm(curproc->sharePtr->pgdir);
   }
@@ -34,7 +32,7 @@ void free_proc(struct proc *curproc) {
   curproc->retval = 0;
 }
 
-// Kill all threads except the current one and free resources
+// 나를 제외한 모든 thread kill
 void kill_other_threads(struct proc *curproc) {
   int i;
   acquire(&ptable.lock);
@@ -50,8 +48,9 @@ void kill_other_threads(struct proc *curproc) {
   release(&ptable.lock);
 }
 
-// Load the new program
-int exec(char *path, char **argv)
+
+int 
+exec(char *path, char **argv)
 {
   char *s, *last;
   int i, off;

@@ -68,14 +68,11 @@ sys_sbrk(void)
   int addr;
   int n;
 
-  // acquire(&ptable.lock);
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sharePtr->sz;
   if(growproc(n) < 0)
     return -1;
-  // release(&ptable.lock);
-
   return addr;
 }
 
